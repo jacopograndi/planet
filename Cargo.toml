@@ -1,5 +1,5 @@
 [package]
-name = "planet td"
+name = "planet-td"
 version = "0.1.0"
 edition = "2021"
 
