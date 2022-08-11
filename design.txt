@@ -1,0 +1,40 @@
+> scope
+. endless tower defence
+waves of enemies
+after a wave pick an upgrade
+. tower defence with levels
+waves
+upgrades bought after wave
+levels define wave list
+at the end of level, metaprogression
+. slay the spire, ftl like
+progress to another planet, graph of planets
+at the end the planet gives an upgrade
+. satellite juggling
+shoot power to satellites to make them stay in orbit
+download science
+
+> gameplay
+shoot the enemies
+plan for upgrades
+
+> progression
+upgrades:
+. gun cooldown
+. gun bullets number
+. gun scatter
+. bullet homing
+. bullet damage
+. bullet density
+. bullet speed
+. bullet explosion radius
+how upgrades are obtained
+. bought with tech resource
+. bought with scrap from enemies
+. chosen at the end of round
+. enemies drop them
+upgrade limitations
+. max number
+. grid inventory
+. weight
+. power

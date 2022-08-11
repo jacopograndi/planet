@@ -1,10 +1,14 @@
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::BufReader;
 use std::time::Duration;
 
 use rand::prelude::*;
 
+use serde::*;
+
+use bevy::prelude::*;
 use bevy::sprite::MaterialMesh2dBundle;
-use bevy::{prelude::*, window::WindowResized};
 
 use bevy_rapier2d::{pipeline::CollisionEvent::*, prelude::*};
 
@@ -19,6 +23,7 @@ fn main() {
         .add_system(enemy_clean)
         .add_system(window_resized_event)
         .add_system(spawn_enemies)
+        .add_system(update_ui_wave)
         .add_system_to_stage(CoreStage::PostUpdate, collision_resolve)
         .init_resource::<AssetHandles>()
         .insert_resource(RapierConfiguration {
@@ -77,6 +82,24 @@ struct Bullet {
 struct Spawner {
     spawntimer: Timer,
     size: f32,
+    current_wave: usize,
+    current_spawn: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SpawnAt {
+    enemy_id: u32,
+    cooldown: f32,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Wave {
+    spawns: Vec<SpawnAt>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Challenge {
+    waves: Vec<Wave>,
 }
 
 #[derive(Component)]
@@ -86,6 +109,9 @@ struct Enemy {
     damage: f32,
     hp: f32,
 }
+
+#[derive(Component)]
+struct UiTextWave;
 
 fn window_resized_event(windows: Res<Windows>, mut projection: Query<&mut OrthographicProjection>) {
     let window = windows.primary();
@@ -99,14 +125,72 @@ fn window_resized_event(windows: Res<Windows>, mut projection: Query<&mut Orthog
     projection.single_mut().scale = scale;
 }
 
+fn update_ui_wave(
+    query_spawner: Query<&Spawner>,
+    challenge: Res<Challenge>,
+    mut text_query: Query<&mut Text, With<UiTextWave>>,
+) {
+    let spawner = query_spawner.single();
+
+    let value = if spawner.current_wave < challenge.waves.len() {
+        format!(
+            "wave {}/{}",
+            spawner.current_wave + 1,
+            challenge.waves.len()
+        )
+    } else {
+        format!("challenge completed!")
+    };
+    if let Ok(mut text) = text_query.get_single_mut() {
+        text.sections[0].value = value.clone();
+    }
+}
+
 fn setup(
     mut commands: Commands,
     mut handles: ResMut<AssetHandles>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    asset_server: Res<AssetServer>,
 ) {
-    let mut camera_bundle = Camera2dBundle::new_with_far(100.0);
+    let camera_bundle = Camera2dBundle::new_with_far(100.0);
     commands.spawn_bundle(camera_bundle);
+
+    let file = File::open("assets/challenges/simple.json").expect("No challenge found");
+    let challenge: Challenge = serde_json::from_reader(BufReader::new(file)).unwrap();
+    commands.insert_resource(challenge);
+
+    commands
+        .spawn_bundle(NodeBundle {
+            style: Style {
+                align_self: AlignSelf::FlexEnd,
+                position_type: PositionType::Absolute,
+                position: UiRect {
+                    bottom: Val::Px(5.0),
+                    right: Val::Px(15.0),
+                    ..default()
+                },
+                ..default()
+            },
+            color: Color::rgb(0.05, 0.05, 0.05).into(),
+            ..default()
+        })
+        .with_children(|parent| {
+            parent
+                .spawn_bundle(
+                    TextBundle::from_section(
+                        "wave 1/?",
+                        TextStyle {
+                            font: asset_server.load("fonts/iosevka-term-regular.ttf"),
+                            font_size: 48.0,
+                            color: Color::WHITE,
+                        },
+                    )
+                    .with_text_alignment(TextAlignment::TOP_CENTER)
+                    .with_style(Style { ..default() }),
+                )
+                .insert(UiTextWave);
+        });
 
     handles.meshes.insert(
         MeshName::Circle,
@@ -161,8 +245,27 @@ fn setup(
         .insert(Spawner {
             spawntimer: Timer::new(Duration::from_millis(2000), false),
             size: 1024.0,
+            current_wave: 0,
+            current_spawn: 0,
         });
 
+    commands
+        .spawn_bundle(SpriteBundle {
+            texture: asset_server.load("simple_planet.png"),
+            transform: Transform {
+                translation: Vec3::new(0.0, 0.0, 1.0),
+                scale: Vec3::new(1.0, 1.0, 1.0),
+                ..default()
+            },
+            ..default()
+        })
+        .insert(Collider::ball(192.0 * 0.5))
+        .insert(CollisionGroups::new(0b100, 0b111))
+        .insert(Planet {
+            size: 192.0,
+            hp: 100.0,
+        });
+    /*
     commands
         .spawn_bundle(MaterialMesh2dBundle {
             mesh: handles
@@ -189,7 +292,24 @@ fn setup(
             size: 192.0,
             hp: 100.0,
         });
+    */
 
+    commands
+        .spawn_bundle(SpriteBundle {
+            texture: asset_server.load("player.png"),
+            transform: Transform {
+                translation: Vec3::new(0.0, 92.0 + 16.0, 2.0),
+                scale: Vec3::new(1.0, 1.0, 1.0),
+                ..default()
+            },
+            ..default()
+        })
+        .insert(Player {
+            speed: 300.0,
+            timer: Timer::new(Duration::from_millis(200), false),
+        });
+
+    /*
     commands
         .spawn_bundle(MaterialMesh2dBundle {
             mesh: handles
@@ -214,18 +334,49 @@ fn setup(
             speed: 300.0,
             timer: Timer::new(Duration::from_millis(200), false),
         });
+    */
 }
 
 fn spawn_enemies(
     time: Res<Time>,
     mut commands: Commands,
     handles: ResMut<AssetHandles>,
+    challenge: Res<Challenge>,
     mut spawner_query: Query<(&mut Spawner, &Transform)>,
+    enemy_query: Query<&Enemy>,
+    asset_server: Res<AssetServer>,
 ) {
     let mut rng = thread_rng();
     for (mut spawner, transform) in &mut spawner_query {
+        if spawner.current_wave >= challenge.waves.len() {
+            break;
+        }
+
         spawner.spawntimer.tick(time.delta());
         if spawner.spawntimer.finished() {
+            let wave = &challenge.waves[spawner.current_wave];
+            if spawner.current_spawn + 1 >= wave.spawns.len() {
+                if !enemy_query.is_empty() {
+                    break;
+                }
+
+                spawner.current_spawn = 0;
+                spawner.current_wave += 1;
+                spawner.spawntimer.reset();
+                if spawner.current_wave >= challenge.waves.len() {
+                    break;
+                }
+            } else {
+                spawner.current_spawn += 1;
+                spawner.spawntimer.reset();
+            }
+
+            let wave = &challenge.waves[spawner.current_wave];
+            let spawn = &wave.spawns[spawner.current_spawn];
+
+            spawner
+                .spawntimer
+                .set_duration(Duration::from_millis(spawn.cooldown as u64));
             spawner.spawntimer.reset();
 
             let angle: f32 = rng.gen_range(0.0..(2.0 * std::f32::consts::PI));
@@ -236,6 +387,39 @@ fn spawn_enemies(
             ) + transform.translation;
             let acc = Vec2::new(-pos.y, pos.x).normalize();
 
+            commands
+                .spawn_bundle(SpriteBundle {
+                    texture: asset_server.load("enemy_ship.png"),
+                    transform: Transform {
+                        translation: pos,
+                        rotation: Quat::from_rotation_z(angle),
+                        scale: Vec3::new(1.0, 1.0, 1.0),
+                        ..default()
+                    },
+                    ..default()
+                })
+                .insert(RigidBody::Dynamic)
+                .insert(Restitution::coefficient(0.0))
+                .insert(Collider::capsule(
+                    Vec2::new(0.0, -10.0),
+                    Vec2::new(0.0, 10.0),
+                    10.0,
+                ))
+                .insert(Damping {
+                    linear_damping: 1.0,
+                    angular_damping: 10.0,
+                })
+                .insert(Velocity::linear(acc * 120.0))
+                .insert(CollisionGroups::new(0b001, 0b111))
+                .insert(ActiveEvents::COLLISION_EVENTS)
+                .insert(Enemy {
+                    speed: 2.0,
+                    has_hit: 0,
+                    damage: 1.0,
+                    hp: 100.0,
+                });
+
+            /*
             commands
                 .spawn_bundle(MaterialMesh2dBundle {
                     mesh: handles
@@ -277,6 +461,7 @@ fn spawn_enemies(
                     damage: 1.0,
                     hp: 100.0,
                 });
+            */
         }
     }
 }
@@ -287,6 +472,7 @@ fn shooting(
     handles: ResMut<AssetHandles>,
     mut player_query: Query<(&mut Player, &Transform)>,
     keyboard_input: Res<Input<KeyCode>>,
+    asset_server: Res<AssetServer>,
 ) {
     let shooting = keyboard_input.pressed(KeyCode::S);
     let (mut player, player_trans) = player_query.single_mut();
@@ -298,7 +484,7 @@ fn shooting(
         let acc = player_trans.translation.normalize();
         let acc = Vec2::new(acc.x, acc.y);
         let mut angle = Vec2::angle_between(
-            Vec2::X,
+            Vec2::Y,
             Vec2::new(player_trans.translation.x, player_trans.translation.y),
         );
         if angle.is_nan() {
@@ -306,29 +492,19 @@ fn shooting(
         }
 
         commands
-            .spawn_bundle(MaterialMesh2dBundle {
-                mesh: handles
-                    .meshes
-                    .get(&MeshName::Circle)
-                    .unwrap()
-                    .clone_weak()
-                    .into(),
+            .spawn_bundle(SpriteBundle {
+                texture: asset_server.load("bullet_base.png"),
                 transform: Transform {
                     translation: player_trans.translation,
                     rotation: Quat::from_rotation_z(angle),
-                    scale: Vec3::new(5.0, 5.0, 1.0),
+                    scale: Vec3::new(1.0, 1.0, 1.0),
                     ..default()
                 },
-                material: handles
-                    .materials
-                    .get(&MaterialName::Player)
-                    .unwrap()
-                    .clone_weak(),
                 ..default()
             })
             .insert(RigidBody::Dynamic)
             .insert(Restitution::coefficient(0.0))
-            .insert(Collider::ball(0.5))
+            .insert(Collider::ball(8.0))
             .insert(LockedAxes::ROTATION_LOCKED)
             .insert(Damping {
                 linear_damping: 0.2,
@@ -338,7 +514,7 @@ fn shooting(
             .insert(ActiveEvents::COLLISION_EVENTS)
             .insert(CollisionGroups::new(0b010, 0b001))
             .insert(Velocity::linear(acc * 500.0))
-            .insert(ColliderMassProperties::Density(5.0))
+            .insert(ColliderMassProperties::Density(1.0))
             .insert(Bullet {
                 lifetime: Timer::new(Duration::from_millis(1000), false),
                 damage: 25.0,
@@ -443,8 +619,8 @@ fn movement(
     let angle = angle_past + direction * player.speed * (1.0 / planet.size) * time.delta_seconds();
 
     player_trans.translation = Vec3::new(
-        f32::cos(angle) * (planet.size * 0.5 + 4.0),
-        f32::sin(angle) * (planet.size * 0.5 + 4.0),
+        f32::cos(angle) * (planet.size * 0.5 + 8.0),
+        f32::sin(angle) * (planet.size * 0.5 + 8.0),
         player_trans.translation.z,
     );
     player_trans.rotation = Quat::from_rotation_z(angle - std::f32::consts::FRAC_PI_2);

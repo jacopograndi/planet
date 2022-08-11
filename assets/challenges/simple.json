@@ -1,0 +1,69 @@
+{
+    "waves": [
+        {
+            "spawns": [
+                {
+                    "enemy_id": 0,
+                    "cooldown": 2000
+                },
+                {
+                    "enemy_id": 0,
+                    "cooldown": 2000
+                },
+                {
+                    "enemy_id": 0,
+                    "cooldown": 2000
+                },
+                {
+                    "enemy_id": 0,
+                    "cooldown": 2000
+                },
+                {
+                    "enemy_id": 0,
+                    "cooldown": 2000
+                }
+            ]
+        },
+        {
+            "spawns": [
+                {
+                    "enemy_id": 0,
+                    "cooldown": 2000
+                },
+                {
+                    "enemy_id": 0,
+                    "cooldown": 300
+                },
+                {
+                    "enemy_id": 0,
+                    "cooldown": 300
+                },
+                {
+                    "enemy_id": 0,
+                    "cooldown": 3000
+                },
+                {
+                    "enemy_id": 0,
+                    "cooldown": 300
+                },
+                {
+                    "enemy_id": 0,
+                    "cooldown": 300
+                },
+                {
+                    "enemy_id": 0,
+                    "cooldown": 4000
+                },
+                {
+                    "enemy_id": 0,
+                    "cooldown": 1000
+                },
+                {
+                    "enemy_id": 0,
+                    "cooldown": 1000
+                }
+            ]
+        }
+    ]
+}
+
