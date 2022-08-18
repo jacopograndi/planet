@@ -1,6 +1,4 @@
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::BufReader;
 use std::time::Duration;
 
 use rand::prelude::*;
@@ -13,8 +11,9 @@ use bevy::sprite::MaterialMesh2dBundle;
 use bevy_rapier2d::{pipeline::CollisionEvent::*, prelude::*};
 
 fn main() {
-    App::new()
-        .add_plugins(DefaultPlugins)
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins)
+        .insert_resource(ClearColor(Color::rgb(0.02, 0.02, 0.02)))
         .add_startup_system(setup)
         .add_system(movement)
         .add_system(move_enemies)
@@ -30,8 +29,14 @@ fn main() {
             gravity: Vec2::new(0.0, 0.0),
             ..default()
         })
-        .add_plugin(RapierPhysicsPlugin::<NoUserData>::default().with_physics_scale(100.0))
-        .run();
+        .add_plugin(RapierPhysicsPlugin::<NoUserData>::default().with_physics_scale(100.0));
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        app.add_plugin(bevy_web_resizer::Plugin);
+    }
+
+    app.run();
 }
 
 // dynamic asset storage
@@ -51,10 +56,25 @@ enum MaterialName {
     Enemy,
 }
 
+#[derive(Eq, Hash, PartialEq)]
+enum FontName {
+    IosevkaRegular,
+}
+
+#[derive(Eq, Hash, PartialEq)]
+enum ImageName {
+    Planet,
+    Player,
+    Enemy,
+    Bullet,
+}
+
 #[derive(Default)]
 struct AssetHandles {
     meshes: HashMap<MeshName, Handle<Mesh>>,
     materials: HashMap<MaterialName, Handle<ColorMaterial>>,
+    fonts: HashMap<FontName, Handle<Font>>,
+    images: HashMap<ImageName, Handle<Image>>,
 }
 
 // game components
@@ -97,9 +117,34 @@ struct Wave {
     spawns: Vec<SpawnAt>,
 }
 
+impl Wave {
+    fn from_progress(progress: i32) -> Wave {
+        let mut rng = thread_rng();
+        let mut wave = Wave { spawns: vec![] };
+        let num = progress * 3;
+        for _ in 0..num {
+            wave.spawns.push(SpawnAt {
+                enemy_id: 0,
+                cooldown: rng.gen_range(200.0..2000.0),
+            })
+        }
+        wave
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct Challenge {
     waves: Vec<Wave>,
+}
+
+impl Challenge {
+    fn new() -> Challenge {
+        let mut challenge = Challenge { waves: vec![] };
+        for i in 0..100 {
+            challenge.waves.push(Wave::from_progress(i));
+        }
+        challenge
+    }
 }
 
 #[derive(Component)]
@@ -156,9 +201,28 @@ fn setup(
     let camera_bundle = Camera2dBundle::new_with_far(100.0);
     commands.spawn_bundle(camera_bundle);
 
-    let file = File::open("assets/challenges/simple.json").expect("No challenge found");
-    let challenge: Challenge = serde_json::from_reader(BufReader::new(file)).unwrap();
-    commands.insert_resource(challenge);
+    commands.insert_resource(Challenge::new());
+
+    handles.fonts.insert(
+        FontName::IosevkaRegular,
+        asset_server.load("fonts/iosevka-term-regular.ttf"),
+    );
+
+    handles
+        .images
+        .insert(ImageName::Planet, asset_server.load("simple_planet.png"));
+
+    handles
+        .images
+        .insert(ImageName::Player, asset_server.load("player.png"));
+
+    handles
+        .images
+        .insert(ImageName::Enemy, asset_server.load("enemy_ship.png"));
+
+    handles
+        .images
+        .insert(ImageName::Bullet, asset_server.load("bullet_base.png"));
 
     commands
         .spawn_bundle(NodeBundle {
@@ -181,7 +245,11 @@ fn setup(
                     TextBundle::from_section(
                         "wave 1/?",
                         TextStyle {
-                            font: asset_server.load("fonts/iosevka-term-regular.ttf"),
+                            font: handles
+                                .fonts
+                                .get(&FontName::IosevkaRegular)
+                                .unwrap()
+                                .clone_weak(),
                             font_size: 48.0,
                             color: Color::WHITE,
                         },
@@ -251,7 +319,7 @@ fn setup(
 
     commands
         .spawn_bundle(SpriteBundle {
-            texture: asset_server.load("simple_planet.png"),
+            texture: handles.images.get(&ImageName::Planet).unwrap().clone_weak(),
             transform: Transform {
                 translation: Vec3::new(0.0, 0.0, 1.0),
                 scale: Vec3::new(1.0, 1.0, 1.0),
@@ -265,38 +333,10 @@ fn setup(
             size: 192.0,
             hp: 100.0,
         });
-    /*
-    commands
-        .spawn_bundle(MaterialMesh2dBundle {
-            mesh: handles
-                .meshes
-                .get(&MeshName::Circle)
-                .unwrap()
-                .clone_weak()
-                .into(),
-            transform: Transform {
-                translation: Vec3::new(0.0, 0.0, 1.0),
-                scale: Vec3::new(192.0, 192.0, 1.0),
-                ..default()
-            },
-            material: handles
-                .materials
-                .get(&MaterialName::Planet)
-                .unwrap()
-                .clone_weak(),
-            ..default()
-        })
-        .insert(Collider::ball(0.5))
-        .insert(CollisionGroups::new(0b100, 0b111))
-        .insert(Planet {
-            size: 192.0,
-            hp: 100.0,
-        });
-    */
 
     commands
         .spawn_bundle(SpriteBundle {
-            texture: asset_server.load("player.png"),
+            texture: handles.images.get(&ImageName::Player).unwrap().clone_weak(),
             transform: Transform {
                 translation: Vec3::new(0.0, 92.0 + 16.0, 2.0),
                 scale: Vec3::new(1.0, 1.0, 1.0),
@@ -308,33 +348,6 @@ fn setup(
             speed: 300.0,
             timer: Timer::new(Duration::from_millis(200), false),
         });
-
-    /*
-    commands
-        .spawn_bundle(MaterialMesh2dBundle {
-            mesh: handles
-                .meshes
-                .get(&MeshName::Triangle)
-                .unwrap()
-                .clone_weak()
-                .into(),
-            transform: Transform {
-                translation: Vec3::new(0.0, 92.0 + 16.0, 2.0),
-                scale: Vec3::new(1.0, 1.0, 1.0),
-                ..default()
-            },
-            material: handles
-                .materials
-                .get(&MaterialName::Player)
-                .unwrap()
-                .clone_weak(),
-            ..default()
-        })
-        .insert(Player {
-            speed: 300.0,
-            timer: Timer::new(Duration::from_millis(200), false),
-        });
-    */
 }
 
 fn spawn_enemies(
@@ -344,7 +357,6 @@ fn spawn_enemies(
     challenge: Res<Challenge>,
     mut spawner_query: Query<(&mut Spawner, &Transform)>,
     enemy_query: Query<&Enemy>,
-    asset_server: Res<AssetServer>,
 ) {
     let mut rng = thread_rng();
     for (mut spawner, transform) in &mut spawner_query {
@@ -389,7 +401,7 @@ fn spawn_enemies(
 
             commands
                 .spawn_bundle(SpriteBundle {
-                    texture: asset_server.load("enemy_ship.png"),
+                    texture: handles.images.get(&ImageName::Enemy).unwrap().clone_weak(),
                     transform: Transform {
                         translation: pos,
                         rotation: Quat::from_rotation_z(angle),
@@ -418,50 +430,6 @@ fn spawn_enemies(
                     damage: 1.0,
                     hp: 100.0,
                 });
-
-            /*
-            commands
-                .spawn_bundle(MaterialMesh2dBundle {
-                    mesh: handles
-                        .meshes
-                        .get(&MeshName::Capsule)
-                        .unwrap()
-                        .clone_weak()
-                        .into(),
-                    transform: Transform {
-                        translation: pos,
-                        rotation: Quat::from_rotation_z(angle),
-                        scale: Vec3::new(20.0, 20.0, 1.0),
-                        ..default()
-                    },
-                    material: handles
-                        .materials
-                        .get(&MaterialName::Enemy)
-                        .unwrap()
-                        .clone_weak(),
-                    ..default()
-                })
-                .insert(RigidBody::Dynamic)
-                .insert(Restitution::coefficient(0.0))
-                .insert(Collider::capsule(
-                    Vec2::new(0.0, -0.5),
-                    Vec2::new(0.0, 0.5),
-                    0.5,
-                ))
-                .insert(Damping {
-                    linear_damping: 1.0,
-                    angular_damping: 10.0,
-                })
-                .insert(Velocity::linear(acc * 120.0))
-                .insert(CollisionGroups::new(0b001, 0b111))
-                .insert(ActiveEvents::COLLISION_EVENTS)
-                .insert(Enemy {
-                    speed: 2.0,
-                    has_hit: 0,
-                    damage: 1.0,
-                    hp: 100.0,
-                });
-            */
         }
     }
 }
@@ -472,7 +440,6 @@ fn shooting(
     handles: ResMut<AssetHandles>,
     mut player_query: Query<(&mut Player, &Transform)>,
     keyboard_input: Res<Input<KeyCode>>,
-    asset_server: Res<AssetServer>,
 ) {
     let shooting = keyboard_input.pressed(KeyCode::S);
     let (mut player, player_trans) = player_query.single_mut();
@@ -493,7 +460,7 @@ fn shooting(
 
         commands
             .spawn_bundle(SpriteBundle {
-                texture: asset_server.load("bullet_base.png"),
+                texture: handles.images.get(&ImageName::Bullet).unwrap().clone_weak(),
                 transform: Transform {
                     translation: player_trans.translation,
                     rotation: Quat::from_rotation_z(angle),
